@@ -1,15 +1,21 @@
 import re
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 class SMSCodeExtractor:
 
     PATTERNS = [
-        r'(?:kod|code|pin|otp|sifre|password|doğrulama|verification|şifre)[:\s]*(\d{6})',
-        r'(\d{6})\s*(?:kod|code|pin|otp|sifre|doğrulama|verification)',
-        r'(?:one-time|tek\s*kullanımlık)[:\s]*(\d{6})',
-        r'(?:şifre|parola|password|code)[:\s]*(\d{6})',
+        r'(?:kod|code|pin|otp|sifre|password|doğrulama|verification|şifre|login|giriş)[:\s]*(\d{4,8})',
+        r'(\d{4,8})\s*(?:kod|code|pin|otp|sifre|doğrulama|verification)',
+        r'(?:one-time|tek\s*kullanımlık|security|güvenlik)[:\s]*(\d{4,8})',
+        r'(?:şifre|parola|password|code|token)[:\s]*(\d{4,8})',
+        r'(?:WhatsApp|Telegram|Google|Facebook|Instagram|Twitter|Microsoft|Apple|Amazon|Netflix|Spotify|Discord|TikTok|Snapchat)\s*(?:kod|code|pin|onay|doğrulama)[:\s]*(\d{4,8})',
+        r'(\d{4,8})\s*(?:is your|kodunuz|code|pin|şifre)',
         r'\b(\d{6})\b',
+        r'\b(\d{4})\b',
     ]
 
     @classmethod

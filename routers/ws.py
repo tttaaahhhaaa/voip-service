@@ -1,54 +1,48 @@
-import json
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from services.did_pool import DIDPool
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ws", tags=["WebSocket"])
 
-did_pool: DIDPool = None
-
 
 class ConnectionManager:
 
     def __init__(self):
-        self._connections: dict[str, WebSocket] = {}
+        self._connections: list[WebSocket] = []
 
-    async def connect(self, user_id: str, ws: WebSocket):
+    async def connect(self, ws: WebSocket):
         await ws.accept()
-        self._connections[user_id] = ws
-        logger.info(f"WebSocket connected: {user_id}")
+        self._connections.append(ws)
 
-    def disconnect(self, user_id: str):
-        self._connections.pop(user_id, None)
+    def disconnect(self, ws: WebSocket):
+        if ws in self._connections:
+            self._connections.remove(ws)
 
-    async def notify(self, user_id: str, event: str, data: dict):
-        ws = self._connections.get(user_id)
-        if ws:
+    async def broadcast(self, event: str, data: dict):
+        dead = []
+        for ws in self._connections:
             try:
                 await ws.send_json({"event": event, "data": data})
             except Exception:
-                self.disconnect(user_id)
-
-    async def broadcast(self, event: str, data: dict):
-        for uid in list(self._connections.keys()):
-            await self.notify(uid, event, data)
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
 
 
 manager = ConnectionManager()
 
 
-@router.websocket("/{user_id}")
-async def websocket_endpoint(ws: WebSocket, user_id: str):
-    await manager.connect(user_id, ws)
+@router.websocket("/user")
+async def websocket_endpoint(ws: WebSocket):
+    await manager.connect(ws)
     try:
         while True:
             data = await ws.receive_text()
             if data == "ping":
                 await ws.send_json({"event": "pong"})
     except WebSocketDisconnect:
-        manager.disconnect(user_id)
+        manager.disconnect(ws)
     except Exception as e:
-        logger.error(f"WS error for {user_id}: {e}")
-        manager.disconnect(user_id)
+        logger.error(f"WS error: {e}")
+        manager.disconnect(ws)

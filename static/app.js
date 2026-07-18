@@ -1,234 +1,234 @@
 let ws = null;
-let currentUser = null;
+let selectedNumber = null;
+let messageCache = [];
 
-function setUser() {
-    const userId = document.getElementById('userId').value.trim() || 'user-' + Date.now();
-    document.getElementById('userId').value = userId;
-    currentUser = userId;
-    document.getElementById('userBadge').textContent = userId;
-    document.getElementById('userBadge').style.display = 'inline-block';
-    document.getElementById('afterLogin').style.display = 'block';
-    connectWebSocket();
-    loadDIDs();
-    loadMyDID();
-    refreshSimDidSelect();
-}
-
-function connectWebSocket() {
-    if (ws) { ws.close(); }
+function connectWS() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(protocol + '//' + location.host + '/api/ws/' + currentUser);
+    ws = new WebSocket(protocol + '//' + location.host + '/api/ws/user');
 
-    ws.onopen = function () { updateWSStatus('connected'); };
-    ws.onclose = function () {
-        updateWSStatus('disconnected');
-        setTimeout(connectWebSocket, 3000);
+    ws.onopen = function () { updateStatus('connected'); };
+    ws.onclose = function () { updateStatus('disconnected'); setTimeout(connectWS, 3000); };
+    ws.onerror = function () { updateStatus('disconnected'); };
+    ws.onmessage = function (e) {
+        var msg = JSON.parse(e.data);
+        if (msg.event === 'sms_received') {
+            addSMS(msg.data);
+        }
     };
-    ws.onerror = function () { updateWSStatus('disconnected'); };
-    ws.onmessage = function (event) {
-        var msg = JSON.parse(event.data);
-        handleWSEvent(msg);
-    };
-
-    setInterval(function () {
-        if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping');
-    }, 30000);
+    setInterval(function () { if (ws && ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 30000);
 }
 
-function updateWSStatus(state) {
+function updateStatus(state) {
     var dot = document.getElementById('wsDot');
-    var text = document.getElementById('wsStatus');
+    var txt = document.getElementById('wsStatus');
     dot.className = 'dot';
     if (state === 'connected') {
         dot.classList.add('connected');
-        text.textContent = 'Bağli';
+        txt.textContent = 'Bağlı';
     } else if (state === 'connecting') {
         dot.classList.add('connecting');
-        text.textContent = 'Bağlaniyor...';
+        txt.textContent = 'Bağlanıyor...';
     } else {
         dot.classList.add('disconnected');
-        text.textContent = 'Bağlanti Kesik';
+        txt.textContent = 'Bağlantı Kesik';
     }
 }
 
-function loadDIDs() {
-    var el = document.getElementById('didList');
-    fetch('/api/did/')
+// --- Providers ---
+function loadProviders() {
+    fetch('/api/sms/providers')
         .then(function (r) { return r.json(); })
-        .then(function (dids) {
-            if (dids.length === 0) {
-                el.innerHTML = '<div class="empty">Müsait numara yok</div>';
-                return;
-            }
-            el.innerHTML = '<div class="did-grid">' +
-                dids.map(function (d) {
-                    return '<div class="did-card" onclick="allocateDID(\'' + d.number + '\')">' +
-                        '<div class="number">' + d.number + '</div>' +
-                        '<span class="status-badge ' + d.status + '">' + d.status + '</span></div>';
-                }).join('') + '</div>';
-            refreshSimDidSelect();
-        })
-        .catch(function (e) { el.innerHTML = '<div class="empty">Yüklenemedi: ' + e.message + '</div>'; });
-}
-
-function allocateDID(number) {
-    fetch('/api/did/allocate?user_id=' + encodeURIComponent(currentUser), { method: 'POST' })
-        .then(function (r) {
-            if (!r.ok) throw new Error('Talep başarisiz');
-            return r.json();
-        })
-        .then(function (did) {
-            loadDIDs();
-            loadMyDID();
-            addEvent('system', did.number + ' numarasi size tahsis edildi');
-        })
-        .catch(function (e) { addEvent('system', 'Tahsis hatasi: ' + e.message); });
-}
-
-function loadMyDID() {
-    var el = document.getElementById('myDid');
-    fetch('/api/did/my/' + encodeURIComponent(currentUser))
-        .then(function (r) {
-            if (!r.ok) throw new Error('No DID');
-            return r.json();
-        })
-        .then(function (did) {
-            el.innerHTML = '<div class="selected-did">' +
-                '<div class="label">TAHSIS EDILEN NUMARA</div>' +
-                '<div class="num">' + did.number + '</div>' +
-                '<div style="margin-top:1rem">' +
-                '<button class="btn danger" onclick="releaseDID(\'' + did.number + '\')">Numarayi Serbest Birak</button>' +
-                '</div></div>';
-            refreshSimDidSelect();
-        })
-        .catch(function () {
-            el.innerHTML = '<div class="empty">Henüz bir numara seçmediniz.</div>';
+        .then(function (data) {
+            var sel = document.getElementById('providerSelect');
+            sel.innerHTML = data.providers.map(function (p) {
+                var selected = p === data.active ? 'selected' : '';
+                return '<option value="' + p + '" ' + selected + '>' + p + '</option>';
+            }).join('');
+            document.getElementById('providerStatus').textContent = '✓ ' + data.active;
         });
 }
 
-function releaseDID(number) {
-    fetch('/api/did/release/' + encodeURIComponent(number), { method: 'POST' })
+function onProviderChange() {
+    var name = document.getElementById('providerSelect').value;
+    if (!name) return;
+    fetch('/api/sms/provider?name=' + encodeURIComponent(name), { method: 'POST' })
+        .then(function (r) { return r.json(); })
         .then(function () {
-            loadDIDs();
-            loadMyDID();
-            addEvent('system', number + ' serbest birakildi');
-        })
-        .catch(function (e) { addEvent('system', 'Serbest birakma hatasi: ' + e.message); });
+            document.getElementById('providerStatus').textContent = '✓ ' + name;
+            loadCountries();
+            releaseNumber();
+        });
 }
 
-function handleWSEvent(msg) {
-    switch (msg.event) {
-        case 'call_incoming':
-            addEvent('call', 'Gelen çağri: ' + msg.data.from);
-            break;
-        case 'sms_received':
-            addEvent('sms', 'SMS alindi: ' + msg.data.content);
-            if (msg.data.code) {
-                addEvent('code', 'Dogrulama kodu: <span class="code">' + msg.data.code + '</span>');
+// --- Countries ---
+function loadCountries() {
+    var sel = document.getElementById('countrySelect');
+    sel.innerHTML = '<option value="">Yükleniyor...</option>';
+    sel.disabled = true;
+    fetch('/api/sms/countries')
+        .then(function (r) { return r.json(); })
+        .then(function (countries) {
+            sel.innerHTML = '<option value="">— Ülke Seçin —</option>' +
+                countries.map(function (c) {
+                    return '<option value="' + c.code + '">' + (c.flag || '') + ' ' + c.name + ' (+' + c.code + ')</option>';
+                }).join('');
+            sel.disabled = false;
+        })
+        .catch(function () {
+            sel.innerHTML = '<option value="">Yüklenemedi</option>';
+        });
+}
+
+function onCountryChange() {
+    var code = document.getElementById('countrySelect').value;
+    var numSel = document.getElementById('numberSelect');
+    var btn = document.getElementById('selectBtn');
+    if (!code) {
+        numSel.innerHTML = '<option value="">Önce ülke seçin</option>';
+        numSel.disabled = true;
+        btn.disabled = true;
+        return;
+    }
+    numSel.innerHTML = '<option value="">Numaralar yükleniyor...</option>';
+    numSel.disabled = true;
+    btn.disabled = true;
+
+    fetch('/api/sms/numbers?country=' + encodeURIComponent(code))
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (!data.numbers || data.numbers.length === 0) {
+                numSel.innerHTML = '<option value="">Bu ülkede numara yok</option>';
+                return;
             }
-            break;
-        case 'pong':
-            break;
-    }
+            numSel.innerHTML = data.numbers.map(function (n) {
+                return '<option value="' + n + '">' + n + '</option>';
+            }).join('');
+            numSel.disabled = false;
+            btn.disabled = false;
+        })
+        .catch(function () {
+            numSel.innerHTML = '<option value="">Yüklenemedi</option>';
+        });
 }
 
-var eventId = 0;
-function addEvent(type, html) {
-    var log = document.getElementById('eventLog');
-    var iconMap = { call: '📞', sms: '✉️', code: '🔑', system: '⚙️' };
-    var clsMap = { call: 'call', sms: 'sms', code: 'code', system: 'system' };
+// --- Number Selection ---
+function selectNumber() {
+    var num = document.getElementById('numberSelect').value;
+    if (!num) return;
+    selectedNumber = num;
 
-    var child = document.createElement('div');
-    child.className = 'event';
-    child.innerHTML = '<div class="event-icon ' + (clsMap[type] || 'system') + '">' + (iconMap[type] || '⚙️') + '</div>' +
-        '<div class="event-details">' +
-        '<div class="time">' + new Date().toLocaleTimeString('tr-TR') + '</div>' +
-        '<div class="desc">' + html + '</div></div>';
+    fetch('/api/sms/select?number=' + encodeURIComponent(num), { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function () {
+            document.getElementById('displayNumber').textContent = num;
+            document.getElementById('displayCountry').textContent = 'Hazır — Siteye bu numarayı girin';
+            document.getElementById('displayBadge').innerHTML = '<span class="provider-badge">🔔 SMS bekleniyor</span>';
+            document.getElementById('selectBtn').style.display = 'none';
+            document.getElementById('releaseBtn').style.display = 'inline-block';
+            document.getElementById('numberSelect').disabled = true;
+            document.getElementById('countrySelect').disabled = true;
+            loadMessages();
+        });
+}
 
-    var empty = log.querySelector('.empty');
+function releaseNumber() {
+    selectedNumber = null;
+    document.getElementById('displayNumber').textContent = '—';
+    document.getElementById('displayCountry').textContent = 'Bir ülke ve numara seçin';
+    document.getElementById('displayBadge').innerHTML = '';
+    document.getElementById('selectBtn').style.display = 'inline-block';
+    document.getElementById('selectBtn').disabled = false;
+    document.getElementById('releaseBtn').style.display = 'none';
+    document.getElementById('numberSelect').disabled = false;
+    document.getElementById('countrySelect').disabled = false;
+    onCountryChange();
+}
+
+// --- Messages ---
+function loadMessages() {
+    fetch('/api/sms/messages')
+        .then(function (r) { return r.json(); })
+        .then(function (msgs) {
+            messageCache = msgs;
+            renderMessages();
+        });
+}
+
+function renderMessages() {
+    var chat = document.getElementById('smsChat');
+    chat.innerHTML = '';
+    messageCache.forEach(function (msg) {
+        appendMessage(msg, false);
+    });
+    scrollToBottom();
+    document.getElementById('msgCount').textContent = messageCache.length;
+}
+
+function addSMS(data) {
+    messageCache.push(data);
+    appendMessage(data, true);
+    scrollToBottom();
+    document.getElementById('msgCount').textContent = messageCache.length;
+}
+
+function appendMessage(data, animate) {
+    var chat = document.getElementById('smsChat');
+    var code = data.code || data.code_only || '';
+
+    var div = document.createElement('div');
+    div.className = 'sms-msg incoming';
+    if (animate) div.style.animation = 'fadeIn 0.3s ease';
+
+    var senderDisplay = data.from || data.sender || 'Bilinmeyen';
+    var time = data.received_at ? new Date(data.received_at).toLocaleTimeString('tr-TR') : new Date().toLocaleTimeString('tr-TR');
+
+    var html = '<div class="bubble">';
+    html += '<span class="sender-tag">' + escapeHtml(senderDisplay) + '</span> ';
+    html += escapeHtml(data.content || data.text || '(içerik yok)');
+    if (code) {
+        html += '<div class="code-badge">' + escapeHtml(code) + '</div>';
+    }
+    html += '</div>';
+    html += '<div class="meta"><span>' + time + '</span>';
+    if (data.provider) html += '<span>· ' + data.provider + '</span>';
+    html += '</div>';
+
+    div.innerHTML = html;
+    chat.appendChild(div);
+
+    // Remove empty state if present
+    var empty = chat.querySelector('.empty-state');
     if (empty) empty.remove();
-
-    log.prepend(child);
-
-    while (log.children.length > 100) log.removeChild(log.lastChild);
 }
 
-function simulateSms() {
-    var from = document.getElementById('simSmsFrom').value || '+905551234567';
-    var text = document.getElementById('simSmsText').value || 'Dogrulama kodunuz: 482916';
-
-    fetch('/api/did/my/' + encodeURIComponent(currentUser))
-        .then(function (r) {
-            if (!r.ok) throw new Error('Once bir DID numarasi tahsis edin');
-            return r.json();
-        })
-        .then(function (did) {
-            var payload = {
-                from: from,
-                to: did.number,
-                text: text,
-                call_id: 'sim-sms-' + Date.now()
-            };
-            return fetch('/api/webhook/incoming', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-        })
-        .then(function (r) { return r.json(); })
-        .then(function () { addEvent('system', 'SMS gonderildi (simulasyon)'); })
-        .catch(function (e) { addEvent('system', 'SMS simulasyon hatasi: ' + e.message); });
+function scrollToBottom() {
+    var chat = document.getElementById('smsChat');
+    setTimeout(function () { chat.scrollTop = chat.scrollHeight; }, 50);
 }
 
-function simulateCall() {
-    var from = document.getElementById('simCallFrom').value || '+905551234567';
-    var to = document.getElementById('simCallDid').value;
-
-    if (!to) {
-        fetch('/api/did/my/' + encodeURIComponent(currentUser))
-            .then(function (r) {
-                if (!r.ok) throw new Error('Once bir DID numarasi tahsis edin');
-                return r.json();
-            })
-            .then(function (did) { return did.number; })
-            .then(function (num) { doSimulateCall(from, num); })
-            .catch(function (e) { addEvent('system', 'Cagri simulasyon hatasi: ' + e.message); });
-    } else {
-        doSimulateCall(from, to);
-    }
+function clearMessages() {
+    messageCache = [];
+    var chat = document.getElementById('smsChat');
+    chat.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>SMS bekleniyor...</p></div>';
+    document.getElementById('msgCount').textContent = '0';
 }
 
-function doSimulateCall(from, to) {
-    var payload = {
-        from: from,
-        to: to,
-        call_id: 'sim-call-' + Date.now()
-    };
-    fetch('/api/webhook/incoming', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    })
-        .then(function (r) { return r.json(); })
-        .then(function () { addEvent('system', 'Cagri gonderildi (simulasyon)'); })
-        .catch(function (e) { addEvent('system', 'Cagri simulasyon hatasi: ' + e.message); });
+function escapeHtml(text) {
+    if (!text) return '';
+    var d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
 }
 
-function refreshSimDidSelect() {
-    var sel = document.getElementById('simCallDid');
-    fetch('/api/did/')
-        .then(function (r) { return r.json(); })
-        .then(function (dids) {
-            sel.innerHTML = '<option value="">— Mevcut DID\'ler —</option>' +
-                dids.filter(function (d) { return d.status === 'available'; })
-                    .map(function (d) {
-                        return '<option value="' + d.number + '">' + d.number + ' (' + d.status + ')</option>';
-                    }).join('');
-        })
-        .catch(function () {});
-}
+// Poll for messages every 5 seconds when a number is selected
+setInterval(function () {
+    if (selectedNumber) loadMessages();
+}, 5000);
 
+// Init
 document.addEventListener('DOMContentLoaded', function () {
-    updateWSStatus('connecting');
-    setUser();
+    updateStatus('connecting');
+    connectWS();
+    loadProviders();
+    loadCountries();
 });
