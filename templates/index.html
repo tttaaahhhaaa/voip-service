@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sanal VoIP ve Çağrı Dağıtım Servisi</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a; color: #e2e8f0;
+            min-height: 100vh;
+        }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 1rem 2rem; background: #1e293b; border-bottom: 1px solid #334155;
+        }
+        header h1 { font-size: 1.25rem; color: #38bdf8; }
+        header .status { display: flex; align-items: center; gap: 0.5rem; }
+        .dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #22c55e; display: inline-block;
+        }
+        .dot.connecting { background: #eab308; animation: pulse 1s infinite; }
+        .dot.disconnected { background: #ef4444; }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .card {
+            background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+            padding: 1.5rem; margin-bottom: 1.5rem;
+        }
+        .card h2 { font-size: 1rem; color: #94a3b8; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .did-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(180px,1fr));
+            gap: 0.75rem; margin-top: 1rem;
+        }
+        .did-card {
+            background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+            padding: 0.75rem; text-align: center; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .did-card:hover { border-color: #38bdf8; }
+        .did-card .number { font-family: 'Courier New', monospace; font-size: 0.9rem; color: #e2e8f0; }
+        .did-card .status-badge {
+            display: inline-block; font-size: 0.7rem; padding: 0.2rem 0.5rem;
+            border-radius: 4px; margin-top: 0.5rem;
+        }
+        .available { background: #166534; color: #86efac; }
+        .allocated { background: #854d0e; color: #fde047; }
+        .busy { background: #7f1d1d; color: #fca5a5; }
+        .selected-did {
+            text-align: center; padding: 2rem;
+        }
+        .selected-did .label { font-size: 0.8rem; color: #64748b; }
+        .selected-did .num { font-size: 1.5rem; color: #38bdf8; font-family: 'Courier New', monospace; margin-top: 0.25rem; }
+        .event-log { max-height: 400px; overflow-y: auto; }
+        .event {
+            display: flex; align-items: flex-start; gap: 0.75rem;
+            padding: 0.75rem 0; border-bottom: 1px solid #1e293b;
+        }
+        .event:last-child { border-bottom: none; }
+        .event-icon {
+            width: 32px; height: 32px; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; font-size: 0.9rem;
+        }
+        .event-icon.call { background: #1e3a5f; color: #60a5fa; }
+        .event-icon.sms { background: #3b1f4e; color: #c084fc; }
+        .event-icon.code { background: #1e3a3a; color: #34d399; }
+        .event-icon.system { background: #1e293b; color: #94a3b8; }
+        .event-details { flex: 1; }
+        .event-details .time { font-size: 0.7rem; color: #64748b; }
+        .event-details .desc { font-size: 0.85rem; color: #e2e8f0; margin-top: 0.25rem; }
+        .event-details .code {
+            display: inline-block; background: #0f172a; padding: 0.15rem 0.5rem;
+            border-radius: 4px; font-family: monospace; font-size: 1rem;
+            margin-top: 0.25rem; color: #34d399; border: 1px solid #166534;
+        }
+        .btn {
+            background: #38bdf8; color: #0f172a; border: none;
+            padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer;
+            font-weight: 600; font-size: 0.85rem; transition: background 0.2s;
+        }
+        .btn:hover { background: #7dd3fc; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn.success { background: #22c55e; }
+        .btn.danger { background: #ef4444; color: #fff; }
+        .btn.danger:hover { background: #f87171; }
+        .flex { display: flex; gap: 0.5rem; align-items: center; }
+        .flex-wrap { flex-wrap: wrap; }
+        .mb-1 { margin-bottom: 1rem; }
+        .text-center { text-align: center; }
+        .empty { text-align: center; padding: 2rem; color: #64748b; }
+        .loading { color: #64748b; text-align: center; padding: 1rem; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+        @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        .user-id-input {
+            background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+            padding: 0.5rem 0.75rem; color: #e2e8f0; font-size: 0.85rem; width: 100%;
+        }
+        .user-id-input:focus { outline: none; border-color: #38bdf8; }
+        .simulate-card {
+            background: #0f172a; border: 1px solid #334155; border-radius: 8px;
+            padding: 1rem; margin-top: 1rem;
+        }
+        .simulate-card h3 { font-size: 0.85rem; color: #94a3b8; margin-bottom: 0.75rem; }
+        .badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+        .badge-success { background: #166534; color: #86efac; }
+        select, input[type="text"] {
+            background: #0f172a; border: 1px solid #334155; border-radius: 6px;
+            padding: 0.5rem; color: #e2e8f0; font-size: 0.85rem;
+        }
+        select:focus { outline: none; border-color: #38bdf8; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Sanal VoIP Servisi</h1>
+        <div class="status">
+            <span id="wsDot" class="dot"></span>
+            <span id="wsStatus">Bağlanıyor...</span>
+        </div>
+    </header>
+    <div class="container">
+        <div class="card">
+            <div class="flex mb-1 flex-wrap" style="justify-content:space-between">
+                <h2 style="margin:0">Kullanıcı Oturumu</h2>
+                <span id="userBadge" class="badge badge-success" style="display:none"></span>
+            </div>
+            <div class="flex" style="gap:0.75rem">
+                <input type="text" id="userId" class="user-id-input" placeholder="Kullanici ID girin..." value="demo-user" />
+                <button onclick="setUser()" class="btn">Oturum Aç</button>
+            </div>
+        </div>
+
+        <div id="afterLogin" style="display:none">
+            <div class="grid-2">
+                <div class="card">
+                    <h2>Kullanilabilir DID Numaralari</h2>
+                    <div id="didList" class="loading">Yükleniyor...</div>
+                </div>
+                <div class="card">
+                    <h2>Numaram</h2>
+                    <div id="myDid">
+                        <div class="empty">Henüz bir numara seçmediniz.</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="flex mb-1 flex-wrap" style="justify-content:space-between">
+                    <h2 style="margin:0">Olay Günlüğü (Anlik)</h2>
+                    <button onclick="document.getElementById('eventLog').innerHTML='<div class=\\'empty\\'>Olay bekleniyor...</div>'" class="btn" style="font-size:0.75rem">Temizle</button>
+                </div>
+                <div id="eventLog" class="event-log">
+                    <div class="empty">Olay bekleniyor...</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Simülasyon (Test)</h2>
+                <p style="color:#64748b; font-size:0.85rem; margin-bottom:1rem">
+                    Gelen SMS ve çağrıları simüle etmek için aşağıdaki araçları kullanin.
+                </p>
+                <div class="grid-2">
+                    <div class="simulate-card">
+                        <h3>SMS Gönder</h3>
+                        <div style="display:flex;flex-direction:column;gap:0.5rem">
+                            <input type="text" id="simSmsFrom" class="user-id-input" placeholder="Gönderen (örn: +905551234567)" value="+905551234567" />
+                            <input type="text" id="simSmsText" class="user-id-input" placeholder="SMS metni" value="Dogrulama kodunuz: 482916" />
+                            <button onclick="simulateSms()" class="btn success">SMS Gönder</button>
+                        </div>
+                    </div>
+                    <div class="simulate-card">
+                        <h3>Çağrı Simülasyonu</h3>
+                        <div style="display:flex;flex-direction:column;gap:0.5rem">
+                            <input type="text" id="simCallFrom" class="user-id-input" placeholder="Arayan (örn: +905551234567)" value="+905551234567" />
+                            <select id="simCallDid" class="user-id-input">
+                                <option value="">— Mevcut DID'ler —</option>
+                            </select>
+                            <button onclick="simulateCall()" class="btn">Çağrı Gönder</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
