@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: voip-service
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: APP_NAME
+        value: "Sanal VoIP Servisi"
+      - key: DEBUG
+        value: "false"
+      - key: DID_ALLOCATION_TIMEOUT_MINUTES
+        value: "30"
