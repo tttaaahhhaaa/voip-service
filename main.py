@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -8,6 +9,7 @@ from starlette.requests import Request
 from config import Settings
 from services.sms_provider_manager import SMSProviderManager
 from services.sms_parser import SMSCodeExtractor
+from services.local_storage import LocalStorage
 from services.sms_providers import IncomingSMS
 from routers.ws import manager as ws_manager
 
@@ -19,11 +21,13 @@ logger = logging.getLogger(__name__)
 
 settings = Settings()
 sms_manager = SMSProviderManager()
+local_db = LocalStorage()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.APP_NAME}")
+    logger.info(f"Messages stored at: {local_db.db_path}")
 
     await sms_manager.init_defaults()
 
@@ -32,6 +36,7 @@ async def lifespan(app: FastAPI):
 
     import routers.sms_provider as sms_router
     sms_router.provider_mgr = sms_manager
+    sms_router.local_db = local_db
 
     logger.info(f"SMS Providers: {sms_manager.get_providers()}, Active: {sms_manager.provider_name}")
     yield
@@ -54,6 +59,14 @@ async def on_sms_received(msg: IncomingSMS):
     code = SMSCodeExtractor.extract(msg.text) or msg.code or ""
     masked = SMSCodeExtractor.mask_sensitive(msg.text)
 
+    local_db.save_message(
+        number=msg.number,
+        sender=msg.sender,
+        text=masked,
+        code=code,
+        provider=msg.provider,
+    )
+
     logger.info(f"SMS from {msg.sender}: {masked[:60]} | Code: {code or 'N/A'}")
 
     await ws_manager.broadcast("sms_received", {
@@ -70,6 +83,17 @@ async def dashboard(request: Request):
     with open("templates/index.html", "r", encoding="utf-8") as f:
         html = f.read()
     return HTMLResponse(html)
+
+
+@app.get("/api/info")
+async def app_info():
+    return {
+        "app": settings.APP_NAME,
+        "providers": sms_manager.get_providers(),
+        "active_provider": sms_manager.provider_name,
+        "db_path": local_db.db_path,
+        "total_messages": len(local_db.get_messages(limit=99999)),
+    }
 
 
 if __name__ == "__main__":

@@ -1,10 +1,12 @@
 from fastapi import APIRouter, HTTPException, Query
 from services.sms_provider_manager import SMSProviderManager
 from services.sms_parser import SMSCodeExtractor
+from services.local_storage import LocalStorage
 
 router = APIRouter(prefix="/api/sms", tags=["SMS Provider"])
 
 provider_mgr: SMSProviderManager = None
+local_db: LocalStorage = None
 
 
 @router.get("/countries")
@@ -26,6 +28,7 @@ async def list_numbers(country: str = Query(default="US")):
 @router.post("/select")
 async def select_number(number: str = Query(...)):
     provider_mgr.select_number(number)
+    local_db.set_setting("last_number", number)
     return {"status": "selected", "number": number}
 
 
@@ -33,25 +36,24 @@ async def select_number(number: str = Query(...)):
 async def get_selected():
     num = provider_mgr.get_selected_number()
     if not num:
+        num = local_db.get_setting("last_number", "")
+        if num:
+            provider_mgr.select_number(num)
+    if not num:
         raise HTTPException(status_code=404, detail="No number selected")
     return {"number": num}
 
 
 @router.get("/messages")
 async def get_messages():
-    msgs = provider_mgr.get_message_history()
-    result = []
-    for m in msgs:
-        result.append({
-            "number": m.number,
-            "sender": m.sender,
-            "text": m.text,
-            "code": SMSCodeExtractor.extract(m.text),
-            "code_only": m.code,
-            "received_at": m.received_at.isoformat() if m.received_at else "",
-            "provider": m.provider,
-        })
-    return result
+    msgs = local_db.get_messages(limit=200)
+    return msgs
+
+
+@router.post("/messages/clear")
+async def clear_messages():
+    local_db.clear_messages()
+    return {"status": "cleared"}
 
 
 @router.get("/providers")
